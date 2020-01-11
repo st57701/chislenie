@@ -1,0 +1,177 @@
+"use strict";
+
+if (this.JSON == undefined) {
+  this.JSON = {
+    parse: function (x) {
+      "use strict";
+      return eval("(" + x + ")");
+    },
+    stringify: function (x) {
+      "use strict";
+      var quote = function (string) {
+        return "\"" + string.replace(/[\x00-\x1f\\"]/g, function (character) {
+          return "\\u" + (0x10000 + character.charCodeAt(0)).toString(16).slice(1);
+        }) + "\"";
+      };
+      if (typeof x === "object") {
+        var isArray = x.length != undefined;
+        var f = false;
+        var s = "";
+        s += isArray ? "[" : "{";
+        for (var i in x) {
+          if (x.hasOwnProperty(i)) {
+            var v = x[i];
+            if (v != undefined) {
+              if (f) {
+                s += ",";
+              }
+              f = true;
+              s += (isArray ? "" : quote(i) + ":") + JSON.stringify(v);
+            }
+          }
+        }
+        s += isArray ? "]" : "}";
+        return s;
+      }
+      if (typeof x === "number" || typeof x === "boolean") {
+        return x.toString();
+      }
+      return x == undefined ? "null" : quote(x.toString());
+    }
+  };
+}
+
+(function () {
+  "use strict";
+
+  var baseURL = "";
+  var scripts = document.getElementsByTagName("script");
+  for (var i = 0; i < scripts.length; i += 1) {
+    var script = scripts[i];
+    if (script.getAttribute("data-jstest-url") != null) {
+      baseURL = script.getAttribute("data-jstest-url").replace(/[^\/]*$/, ""); // document.currentScript.src
+    }
+  }
+
+var initializeEventSource = function () {
+  var TIMEOUT = 60000;
+
+  var iframe = document.createElement("iframe");
+  iframe.sandbox = "allow-scripts";
+  iframe.referrerPolicy = "no-referrer";
+  iframe.style.width = "0px";
+  iframe.style.height = "0px";
+  iframe.style.border = "0px none transparent";
+  iframe.style.padding = "0px";
+  iframe.style.margin = "0px";
+  iframe.style.visibility = "hidden";
+  iframe.style.display = "block";
+
+  var es = new EventSource(baseURL + "tests.php?events=1");
+  var currentTestId = "";
+  var timeoutId = 0;
+  var results = null;
+  var testsQueue = [];
+  var onTimeout = function () {
+    if (results === null) {
+      results = [];//!
+    }
+    if (results !== null && results !== "n/a") {
+      var x = new XMLHttpRequest();
+      x.open("PUT", baseURL + "tests.php?results=" + currentTestId, true);
+      x.send(JSON.stringify(results));
+    }
+    currentTestId = "";
+    timeoutId = 0;
+    results = null;
+    window.setTimeout(go, 0);
+  };
+  var go = function () {
+    if (testsQueue.length !== 0 && currentTestId === "") {
+      var i = Math.floor(Math.random() * testsQueue.length);
+      var tmp = testsQueue[testsQueue.length - 1];
+      testsQueue[testsQueue.length - 1] = testsQueue[i];
+      testsQueue[i] = tmp;
+      currentTestId = testsQueue.pop();
+      iframe.src = baseURL + "iframe.html";
+      timeoutId = window.setTimeout(onTimeout, TIMEOUT);
+    }
+  };
+  es.addEventListener("test", function (e) {
+    testsQueue.push(e.data);
+
+    window.setTimeout(function () { // to wait for other events
+      go();
+    }, 100);
+  }, false);
+  document.documentElement.appendChild(iframe);
+
+  if (Number.parseInt == undefined) {
+    Number.parseInt = parseInt;
+  }
+
+  var onMessage = function (event) {
+    if (event.source === iframe.contentWindow && currentTestId !== "") {
+      var data = String(event.data);
+      if (data.slice(0, "complete:".length) === "complete:") {
+        data = data.slice("complete:".length);
+        var id = data.slice(0, 8);
+        if (Number.parseInt(currentTestId, 10) === Number.parseInt(id, 10)) { // leading zeros in id do not allow to compare strings
+          data = data.slice(8);
+          window.clearTimeout(timeoutId);
+          results = data === "n/a" ? "n/a" : JSON.parse(data);
+          onTimeout();
+        }
+      }
+      if (data === "ready") {
+        iframe.contentWindow.postMessage(currentTestId, "*");
+      }
+    }
+  };
+
+  // Mozilla/5.0 (X11; Linux x86_64) KHTML/4.13.3 (like Gecko) Konqueror/4.13
+  var userAgent = window.navigator.userAgent;
+  if (userAgent.indexOf("KHTML") !== -1 && userAgent.indexOf("Konqueror") !== -1 && !("sandbox" in HTMLIFrameElement.prototype)) {
+    window.postMessage = undefined;
+  }
+  if (window.postMessage != undefined && window.addEventListener != undefined) {
+    window.addEventListener("message", onMessage, false);
+  } else {
+    if (window.postMessage == undefined) {
+      window.postMessage = function (message) {
+        // Note: the event will not work.
+        onMessage({data: message, source: iframe.contentWindow});
+      };
+    }
+    window.onmessage = function () {
+      onMessage(window.event);
+    };
+  }
+};
+
+  if (typeof window.EventSource !== "function") {
+    var done = false;
+    var script = document.createElement("script");
+    script.async = true;
+    script.src = baseURL + "EventSource.js";
+    script.onload = function () {
+      if (!done) {
+        done = true;
+        initializeEventSource();
+      }
+    };
+    script.onreadystatechange = function () {
+      // https://stackoverflow.com/questions/23041650/polyfill-for-onload-of-script-tag-in-head
+      if (script.readyState === "complete" || script.readyState === "loaded") { // IE 8
+        if (!done) {
+          done = true;
+          initializeEventSource();
+        }
+      }
+    };
+    document.documentElement.appendChild(script);
+  } else {
+    initializeEventSource();
+  }
+
+}());
